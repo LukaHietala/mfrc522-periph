@@ -12,28 +12,34 @@ import (
 	"periph.io/x/host/v3/rpi"
 )
 
-// Before starting make sure to have the mfrc522 card connected and SPI (in
-// raspi config) enabled.
-// Remember to also update the pins and server address below.
+// Before starting here's some things to check:
+// - Enable SPI in raspi-config
+// - Wire MFRC522 module in and use the pins below to get it working with
+// minimal fiddling
+// - Add required stuff to .env. Check README and env.go
 //
-// Example layout:
-// SDA to pin 24 (gpio 8)
-// SCK to pin 23 (gpio 11)
-// MOSI to pin 19 (gpio 10)
-// MISO to pin 21 (gpio 9)
-// GND to pin 6 (ground)
-// RST to Pin 22 (gpio 25, below!)
-// 3.3v to pin 1 (3v3 power)
-// IRQ to pin 18 (gpio 24, below!)
+// Pins
+//   3.3V  -> Pin 1  (3.3V Power)
+//   GND   -> Pin 6  (Ground)
+//   IRQ   -> Pin 18 (GPIO 24).. Many tutorials omit this but periph library
+//   uses interrupts instead of polling to be more efficient.
+//   MISO  -> Pin 21 (GPIO 9)
+//   RST   -> Pin 22 (GPIO 25)
+//   SCK   -> Pin 23 (GPIO 11)
+//   SDA   -> Pin 24 (GPIO 8)
+//   MOSI  -> Pin 19 (GPIO 10)
 //
-// Logs can be read from systemd journal
 //
-// Verify that these match with the setup, change if needed (if you followed the
-// example layout you shouln't have to touch these :D)
+// Logs can be read from the systemd journal
 //
 // Tested on:
-// Raspberry Pi 3 Model B Plus Rev 1.3
-// Mifare MFRC522 [bus: SPI0.0, reset pin: GPIO25, irq pin: GPIO24]
+// - Raspberry Pi 3 Model B+ Rev 1.3
+// - Mifare MFRC522 [Bus: SPI0.0, Reset Pin: GPIO25, IRQ Pin: GPIO24]
+//
+// Other useful stuff:
+// - https://www.nxp.com/docs/en/data-sheet/MFRC522.pdf
+// - https://periph.io/device/mf-rc522/
+// - https://github.com/periph/devices/blob/main/mfrc522/example_test.go
 
 var (
 	resetPin = rpi.P1_22

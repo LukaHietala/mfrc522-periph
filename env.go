@@ -7,6 +7,7 @@ import (
 
 type Config struct {
 	ServerAddr string `env:"SERVER_ADDRESS"`
+	ReaderID   uint16 `env:"READER_ID"`
 	SecretKey  string `env:"SECRET_KEY"`
 }
 

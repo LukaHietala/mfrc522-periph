@@ -25,12 +25,14 @@ import (
 // Byte 10-13 (uint32): Seq. Sequence number. Server drops all packets with seq
 // <= last seq.
 //
-// Byte 14-45 ([32]uint8): HMAC-SHA256 hash. Sum of headers and uid. Works as
+// Byte 14-15 (unit16): Reader ID. Used just for device identification.
+//
+// Byte 16-47 ([32]uint8): HMAC-SHA256 hash. Sum of headers and uid. Works as
 // the packet nonce. Server makes sure that the sender is allowed to actually
 // send packets with this and makes sure that fields like timestamp and seq
 // can't be forged.
 //
-// Byte 46..: UID data. The rfid uid.
+// Byte 48..: UID data. The rfid uid.
 
 const (
 	// RFID uid should always be either 4 or 7 bytes
@@ -48,6 +50,7 @@ type UIDPacket struct {
 	Length    uint8
 	Timestamp int64
 	Seq       uint32
+	ReaderID  uint16
 	Hash      [32]byte
 	UID       []byte
 }
@@ -74,8 +77,8 @@ func (p *UIDPacket) MarshalBinary() ([]byte, error) {
 	p.Magic = magicByte
 	p.Length = uint8(uidLen)
 	p.Timestamp = time.Now().Unix()
-
 	p.Seq = lastSeq.Add(1) - 1
+	p.ReaderID = config.ReaderID
 
 	mac := hmac.New(sha256.New, []byte(config.SecretKey))
 
@@ -83,21 +86,24 @@ func (p *UIDPacket) MarshalBinary() ([]byte, error) {
 	_ = binary.Write(mac, binary.BigEndian, p.Length)
 	_ = binary.Write(mac, binary.BigEndian, p.Timestamp)
 	_ = binary.Write(mac, binary.BigEndian, p.Seq)
+	_ = binary.Write(mac, binary.BigEndian, p.ReaderID)
+
 	mac.Write(p.UID)
 
 	copy(p.Hash[:], mac.Sum(nil))
 
-	// magic + length + timestamp + seq + hash + uid size
-	buf := make([]byte, 1+1+8+4+32+uidLen)
+	// magic + length + timestamp + seq + hash + reader id + uid size
+	buf := make([]byte, 1+1+8+4+2+32+uidLen)
 
 	buf[0] = p.Magic
 	buf[1] = p.Length
 
 	binary.BigEndian.PutUint64(buf[2:10], uint64(p.Timestamp))
 	binary.BigEndian.PutUint32(buf[10:14], p.Seq)
+	binary.BigEndian.PutUint16(buf[14:16], p.ReaderID)
 
-	copy(buf[14:46], p.Hash[:])
-	copy(buf[46:], p.UID)
+	copy(buf[16:48], p.Hash[:])
+	copy(buf[48:], p.UID)
 
 	return buf, nil
 }
