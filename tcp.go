@@ -155,25 +155,3 @@ func (c *TCPClient) Run(ctx context.Context, uidChan <-chan []byte) {
 		}
 	}
 }
-
-func (c *TCPClient) Send(uid []byte) {
-	conn, err := net.DialTimeout("tcp", c.addr, c.dialTimeout)
-	if err != nil {
-		log.Printf("network err (dial): %v", err)
-		return
-	}
-	defer conn.Close()
-
-	p := &UIDPacket{UID: uid}
-	packetBytes, err := p.MarshalBinary()
-	if err != nil {
-		log.Printf("marshal err: %v", err)
-		return
-	}
-
-	conn.SetWriteDeadline(time.Now().Add(c.dialTimeout))
-	if _, err := conn.Write(packetBytes); err != nil {
-		log.Printf("network err (write): %v", err)
-		return
-	}
-}
