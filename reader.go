@@ -82,7 +82,6 @@ func (r *Reader) Start(ctx context.Context, uidChan chan<- []byte) {
 		currentUID := hex.EncodeToString(uid)
 
 		if currentUID == lastUID && time.Since(lastRead) < r.debounceTime {
-			log.Println("debounced", currentUID)
 			continue
 		}
 
