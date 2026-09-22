@@ -82,13 +82,14 @@ func (r *Reader) Start(ctx context.Context, uidChan chan<- []byte) {
 		currentUID := hex.EncodeToString(uid)
 
 		if currentUID == lastUID && time.Since(lastRead) < r.debounceTime {
+			log.Println("debounced", currentUID)
 			continue
 		}
 
 		lastUID = currentUID
 		lastRead = time.Now()
 
-		log.Println("read uid:", currentUID)
+		log.Printf("read uid: %s len: %d", currentUID, len(uid))
 
 		select {
 		case <-ctx.Done():
