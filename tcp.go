@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"sync/atomic"
@@ -41,6 +42,10 @@ const (
 	maxPayloadLen = 7
 
 	magicByte = 0xAA
+
+	// Pairing responses from and to server
+	ackOK       = 0x01
+	ackUnpaired = 0xFF
 )
 
 var lastSeq atomic.Uint32
@@ -108,7 +113,7 @@ func (p *UIDPacket) MarshalBinary() ([]byte, error) {
 	return buf, nil
 }
 
-func (c *TCPClient) Run(ctx context.Context, uidChan <-chan []byte) {
+func (c *TCPClient) Run(ctx context.Context, uidChan <-chan []byte, repair chan<- struct{}) {
 	var conn net.Conn
 	defer func() {
 		if conn != nil {
@@ -151,6 +156,29 @@ func (c *TCPClient) Run(ctx context.Context, uidChan <-chan []byte) {
 				conn.SetWriteDeadline(time.Now().Add(c.dialTimeout))
 				if _, err := conn.Write(packetBytes); err != nil {
 					log.Printf("network err (write): %v", err)
+					conn.Close()
+					conn = nil
+					continue
+				}
+
+				conn.SetReadDeadline(time.Now().Add(c.dialTimeout))
+				var ack [1]byte
+				if _, err := io.ReadFull(conn, ack[:]); err != nil {
+					log.Printf("network err (read response): %v", err)
+					conn.Close()
+					conn = nil
+					continue
+				}
+
+				switch ack[0] {
+				case ackOK:
+				case ackUnpaired:
+					log.Println("server rejected reader: device is not paired")
+					repair <- struct{}{}
+					break
+
+				default:
+					log.Printf("server sent some trash: 0x%x", ack[0])
 					conn.Close()
 					conn = nil
 					continue

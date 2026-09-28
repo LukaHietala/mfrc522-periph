@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"errors"
+	"flag"
 	"log"
 	"os"
 	"os/signal"
@@ -29,6 +31,9 @@ import (
 //   SDA   -> Pin 24 (GPIO 8)
 //   MOSI  -> Pin 19 (GPIO 10)
 //
+// Once ran the device advertises itself on current network under the service
+// name "_rfid_reader._tcp" with label ({label_flag}+{device_mac_address}). The
+// main server can scan for these and for a pair. Pair info is stored in "config.json".
 //
 // Logs can be read from the systemd journal
 //
@@ -48,15 +53,34 @@ var (
 
 var config *Config
 
+var label string
+
+func init() {
+	flag.StringVar(&label, "label", "unnamed", "reader's instance name")
+}
+
 func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	cfg, err := LoadEnv()
+	cfg, err := LoadConfig()
 	if err != nil {
-		log.Fatal(err)
+		if errors.Is(err, os.ErrNotExist) {
+			log.Println("no previous config found, starting pairing...")
+		} else {
+			log.Fatal(err)
+		}
 	}
-	config = &cfg
+	config = cfg
+
+	if config == nil {
+		cfg, err := StartPairing(ctx, label)
+		if err != nil {
+			log.Fatal(err)
+		}
+		config = cfg
+		log.Printf("paired successfully with server %s", cfg.ServerAddr)
+	}
 
 	if _, err := host.Init(); err != nil {
 		log.Fatal(err)
@@ -79,7 +103,13 @@ func main() {
 	uidChan := make(chan []byte, 100)
 	tcpClient := NewTCPClient(config.ServerAddr)
 
-	go tcpClient.Run(ctx, uidChan)
+	repairChan := make(chan struct{})
+	go tcpClient.Run(ctx, uidChan, repairChan)
+	go reader.Start(ctx, uidChan)
 
-	reader.Start(ctx, uidChan)
+	select {
+	case <-repairChan:
+	case <-ctx.Done():
+		return
+	}
 }
