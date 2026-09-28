@@ -33,6 +33,7 @@ func NewReader(port spi.PortCloser, resetPin, irqPin gpio.PinIO) *Reader {
 }
 
 func (r *Reader) Init() error {
+	// SPI needs to be enabled!
 	dev, err := mfrc522.NewSPI(r.port, r.resetPin, r.irqPin)
 	if err != nil {
 		return fmt.Errorf("failed to init mfrc522: %w", err)
@@ -60,7 +61,7 @@ func (r *Reader) Name() string {
 
 func (r *Reader) Start(ctx context.Context, uidChan chan<- []byte) {
 	if r.dev == nil {
-		log.Println("call init first :)")
+		log.Println("forgot to call Init()?")
 		return
 	}
 

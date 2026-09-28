@@ -34,6 +34,10 @@ import (
 // can't be forged.
 //
 // Byte 48..: UID data. The rfid uid.
+//
+// Server/client responses
+// 0x01 - OK
+// 0xFF - Failed
 
 const (
 	// RFID uid should always be either 4 or 7 bytes
@@ -43,9 +47,8 @@ const (
 
 	magicByte = 0xAA
 
-	// Pairing responses from and to server
-	ackOK       = 0x01
-	ackUnpaired = 0xFF
+	ackOK     = 0x01
+	ackFailed = 0xFF
 )
 
 var lastSeq atomic.Uint32
@@ -137,8 +140,7 @@ func (c *TCPClient) Run(ctx context.Context, uidChan <-chan []byte, repair chan<
 				continue
 			}
 
-			// Write pump
-			for {
+			for sent := false; !sent; {
 				if ctx.Err() != nil {
 					return
 				}
@@ -148,8 +150,12 @@ func (c *TCPClient) Run(ctx context.Context, uidChan <-chan []byte, repair chan<
 					conn, err = net.DialTimeout("tcp", c.addr, c.dialTimeout)
 					if err != nil {
 						log.Printf("network err (dial): %v", err)
-						time.Sleep(1 * time.Second)
-						continue
+						select {
+						case <-ctx.Done():
+							return
+						case <-time.After(1 * time.Second):
+							continue
+						}
 					}
 				}
 
@@ -172,19 +178,22 @@ func (c *TCPClient) Run(ctx context.Context, uidChan <-chan []byte, repair chan<
 
 				switch ack[0] {
 				case ackOK:
-				case ackUnpaired:
-					log.Println("server rejected reader: device is not paired")
-					repair <- struct{}{}
-					break
+					sent = true
+
+				case ackFailed:
+					select {
+					case repair <- struct{}{}:
+					case <-ctx.Done():
+						return
+					}
+					conn.Close()
+					conn = nil
 
 				default:
 					log.Printf("server sent some trash: 0x%x", ack[0])
 					conn.Close()
 					conn = nil
-					continue
 				}
-
-				break
 			}
 		}
 	}

@@ -40,10 +40,11 @@ func StartPairing(ctx context.Context, label string) (*Config, error) {
 		8080,
 		[]string{"mac=" + mac},
 		nil)
-	defer srv.Shutdown()
 	if err != nil {
 		return nil, fmt.Errorf("mDNS failed %w", err)
 	}
+	defer srv.Shutdown()
+	log.Printf("registered as %s", name)
 
 	configChan := make(chan Config, 1)
 
@@ -69,7 +70,7 @@ func StartPairing(ctx context.Context, label string) (*Config, error) {
 
 		var header [2]byte
 		if _, err := io.ReadFull(conn, header[:]); err != nil {
-			conn.Write([]byte{ackUnpaired})
+			conn.Write([]byte{ackFailed})
 			log.Printf("pairing failed (read header): %v", err)
 			return
 		}
@@ -77,16 +78,14 @@ func StartPairing(ctx context.Context, label string) (*Config, error) {
 
 		body := make([]byte, length)
 		if _, err := io.ReadFull(conn, body); err != nil {
-			if !errors.Is(err, io.EOF) {
-				conn.Write([]byte{ackUnpaired})
-				log.Printf("pairing failed (read body): %v", err)
-				return
-			}
+			conn.Write([]byte{ackFailed})
+			log.Printf("pairing failed (read body): %v", err)
+			return
 		}
 
 		var cfg Config
 		if err := json.Unmarshal(body, &cfg); err != nil {
-			conn.Write([]byte{ackUnpaired})
+			conn.Write([]byte{ackFailed})
 			log.Printf("pairing failed (json unmarshal): %v", err)
 			return
 		}
@@ -106,7 +105,7 @@ func StartPairing(ctx context.Context, label string) (*Config, error) {
 		}
 		return &cfg, nil
 	case <-ctx.Done():
-		return nil, errors.New("pairing cancelled")
+		return nil, ctx.Err()
 	}
 }
 
@@ -141,7 +140,6 @@ func getMacAddr() (string, error) {
 			if !ok {
 				continue
 			}
-
 			if !ipNet.IP.IsLoopback() && !ipNet.IP.IsUnspecified() {
 				hasIP = true
 				break
@@ -151,8 +149,31 @@ func getMacAddr() (string, error) {
 		if !hasIP {
 			continue
 		}
+
+		if !hasInternet() {
+			continue
+		}
+
 		return i.HardwareAddr.String(), nil
 	}
 
-	return "", errors.New("no valid network interface with an IP address found (loopback skipped)")
+	return "", errors.New("no valid network interface with an IP address and internet connection found (loopback skipped)")
+}
+
+func hasInternet() bool {
+	endpoints := []string{
+		"1.1.1.1:443",
+		"8.8.8.8:443",
+		"168.235.104.38:443",
+	}
+
+	for _, endpoint := range endpoints {
+		conn, err := net.DialTimeout("tcp", endpoint, 2*time.Second)
+		if err == nil {
+			conn.Close()
+			return true
+		}
+	}
+
+	return false
 }

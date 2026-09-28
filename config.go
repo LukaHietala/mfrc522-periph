@@ -47,6 +47,7 @@ func SaveConfig(c *Config) error {
 		return err
 	}
 
+	// Contains secrets so 0600
 	return os.WriteFile(configFile, b, 0600)
 }
 

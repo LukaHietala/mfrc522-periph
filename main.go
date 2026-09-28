@@ -4,10 +4,13 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"fmt"
 	"log"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
+	"time"
 
 	"periph.io/x/conn/v3/spi/spireg"
 	"periph.io/x/host/v3"
@@ -18,7 +21,6 @@ import (
 // - Enable SPI in raspi-config
 // - Wire MFRC522 module in and use the pins below to get it working with
 // minimal fiddling
-// - Add required stuff to .env. Check README and env.go
 //
 // Pins
 //   3.3V  -> Pin 1  (3.3V Power)
@@ -42,9 +44,10 @@ import (
 // - Mifare MFRC522 [Bus: SPI0.0, Reset Pin: GPIO25, IRQ Pin: GPIO24]
 //
 // Other useful stuff:
+// - https://github.com/periph/devices/blob/main/mfrc522/example_test.go
 // - https://www.nxp.com/docs/en/data-sheet/MFRC522.pdf
 // - https://periph.io/device/mf-rc522/
-// - https://github.com/periph/devices/blob/main/mfrc522/example_test.go
+// - https://github.com/hrzlgnm/mdns-browser
 
 var (
 	resetPin = rpi.P1_22
@@ -54,62 +57,115 @@ var (
 var config *Config
 
 var label string
+var noReader bool
 
 func init() {
 	flag.StringVar(&label, "label", "unnamed", "reader's instance name")
+	flag.BoolVar(&noReader, "no-reader", false, "disable physical reader, for debugging")
 }
 
 func main() {
+	flag.Usage = func() {
+		fmt.Fprintf(flag.CommandLine.Output(), "Usage of %s:\n", os.Args[0])
+		flag.PrintDefaults()
+	}
+
+	flag.Parse()
+
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	cfg, err := LoadConfig()
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			log.Println("no previous config found, starting pairing...")
-		} else {
+	var reader *Reader
+	if !noReader {
+		if _, err := host.Init(); err != nil {
 			log.Fatal(err)
 		}
-	}
-	config = cfg
 
-	if config == nil {
-		cfg, err := StartPairing(ctx, label)
+		p, err := spireg.Open("")
 		if err != nil {
 			log.Fatal(err)
 		}
-		config = cfg
-		log.Printf("paired successfully with server %s", cfg.ServerAddr)
+		defer p.Close()
+
+		r := NewReader(p, resetPin, irqPin)
+		if err := r.Init(); err != nil {
+			log.Fatal(err)
+		}
+		defer r.Close()
+
+		reader = r
+		log.Printf("started reader %s", reader.Name())
+	} else {
+		log.Println("skipping reader init")
 	}
 
-	if _, err := host.Init(); err != nil {
+	cfg, err := LoadConfig()
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		log.Fatal(err)
 	}
+	config = cfg
 
-	p, err := spireg.Open("")
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer p.Close()
+	// TODO: Cleanup
+	for {
+		if ctx.Err() != nil {
+			return
+		}
 
-	reader := NewReader(p, resetPin, irqPin)
-	if err := reader.Init(); err != nil {
-		log.Fatal(err)
-	}
-	defer reader.Close()
+		if config == nil {
+			log.Println("no valid config found, starting pairing...")
+			cfg, err := StartPairing(ctx, label)
+			if err != nil {
+				if errors.Is(err, context.Canceled) {
+					log.Println("pairing cancelled")
+					return
+				}
+				log.Printf("pairing failed: %v. trying again...", err)
+				// Maybe just crash
+				time.Sleep(2 * time.Second)
+				continue
+			}
+			config = cfg
+			log.Printf("paired successfully with server %s", config.ServerAddr)
+		}
 
-	log.Printf("started reader %s", reader.Name())
+		childCtx, cancel := context.WithCancel(ctx)
+		defer cancel()
 
-	uidChan := make(chan []byte, 100)
-	tcpClient := NewTCPClient(config.ServerAddr)
+		repairChan := make(chan struct{}, 1)
+		uidChan := make(chan []byte, 100)
+		tcpClient := NewTCPClient(cfg.ServerAddr)
 
-	repairChan := make(chan struct{})
-	go tcpClient.Run(ctx, uidChan, repairChan)
-	go reader.Start(ctx, uidChan)
+		var wg sync.WaitGroup
 
-	select {
-	case <-repairChan:
-	case <-ctx.Done():
-		return
+		// TODO: ping server on start
+
+		wg.Go(func() {
+			tcpClient.Run(childCtx, uidChan, repairChan)
+		})
+
+		if !noReader && reader != nil {
+			wg.Go(func() {
+				reader.Start(childCtx, uidChan)
+			})
+		}
+
+		log.Printf("paired with %s", cfg.ServerAddr)
+
+		select {
+		case <-repairChan:
+			log.Println("server abandoned us, re-pairing...")
+			cancel()
+			wg.Wait()
+
+			if err := ResetConfig(); err != nil {
+				log.Fatalf("failed to reset config: %v.. giving up", err)
+			}
+			config = nil
+
+		case <-ctx.Done():
+			cancel()
+			wg.Wait()
+			return
+		}
 	}
 }
