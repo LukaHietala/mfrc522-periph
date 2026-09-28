@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"sync/atomic"
@@ -33,6 +34,10 @@ import (
 // can't be forged.
 //
 // Byte 48..: UID data. The rfid uid.
+//
+// Server/client responses
+// 0x01 - OK
+// 0xFF - Failed
 
 const (
 	// RFID uid should always be either 4 or 7 bytes
@@ -41,6 +46,9 @@ const (
 	maxPayloadLen = 7
 
 	magicByte = 0xAA
+
+	ackOK     = 0x01
+	ackFailed = 0xFF
 )
 
 var lastSeq atomic.Uint32
@@ -108,7 +116,7 @@ func (p *UIDPacket) MarshalBinary() ([]byte, error) {
 	return buf, nil
 }
 
-func (c *TCPClient) Run(ctx context.Context, uidChan <-chan []byte) {
+func (c *TCPClient) Run(ctx context.Context, uidChan <-chan []byte, repair chan<- struct{}) {
 	var conn net.Conn
 	defer func() {
 		if conn != nil {
@@ -132,8 +140,7 @@ func (c *TCPClient) Run(ctx context.Context, uidChan <-chan []byte) {
 				continue
 			}
 
-			// Write pump
-			for {
+			for sent := false; !sent; {
 				if ctx.Err() != nil {
 					return
 				}
@@ -143,8 +150,12 @@ func (c *TCPClient) Run(ctx context.Context, uidChan <-chan []byte) {
 					conn, err = net.DialTimeout("tcp", c.addr, c.dialTimeout)
 					if err != nil {
 						log.Printf("network err (dial): %v", err)
-						time.Sleep(1 * time.Second)
-						continue
+						select {
+						case <-ctx.Done():
+							return
+						case <-time.After(1 * time.Second):
+							continue
+						}
 					}
 				}
 
@@ -156,7 +167,33 @@ func (c *TCPClient) Run(ctx context.Context, uidChan <-chan []byte) {
 					continue
 				}
 
-				break
+				conn.SetReadDeadline(time.Now().Add(c.dialTimeout))
+				var ack [1]byte
+				if _, err := io.ReadFull(conn, ack[:]); err != nil {
+					log.Printf("network err (read response): %v", err)
+					conn.Close()
+					conn = nil
+					continue
+				}
+
+				switch ack[0] {
+				case ackOK:
+					sent = true
+
+				case ackFailed:
+					select {
+					case repair <- struct{}{}:
+					case <-ctx.Done():
+						return
+					}
+					conn.Close()
+					conn = nil
+
+				default:
+					log.Printf("server sent some trash: 0x%x", ack[0])
+					conn.Close()
+					conn = nil
+				}
 			}
 		}
 	}
