@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net"
 	"os"
 	"os/signal"
 	"sync"
@@ -48,6 +49,9 @@ import (
 // - https://www.nxp.com/docs/en/data-sheet/MFRC522.pdf
 // - https://periph.io/device/mf-rc522/
 // - https://github.com/hrzlgnm/mdns-browser
+//
+// TCP ports
+// - 8080 -pairing
 
 var (
 	resetPin = rpi.P1_22
@@ -137,7 +141,10 @@ func main() {
 
 		var wg sync.WaitGroup
 
-		// TODO: ping server on start
+		_, err := net.DialTimeout("tcp", config.ServerAddr, 2*time.Second)
+		if err != nil {
+			log.Printf("warning, could not ping server: %v", err)
+		}
 
 		wg.Go(func() {
 			tcpClient.Run(childCtx, uidChan, repairChan)
