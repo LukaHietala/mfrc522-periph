@@ -133,7 +133,7 @@ func main() {
 
 		repairChan := make(chan struct{}, 1)
 		uidChan := make(chan []byte, 100)
-		tcpClient := NewTCPClient(cfg.ServerAddr)
+		tcpClient := NewTCPClient(config.ServerAddr)
 
 		var wg sync.WaitGroup
 
@@ -149,7 +149,7 @@ func main() {
 			})
 		}
 
-		log.Printf("paired with %s", cfg.ServerAddr)
+		log.Printf("paired with %s", config.ServerAddr)
 
 		select {
 		case <-repairChan:
