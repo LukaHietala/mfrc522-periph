@@ -144,6 +144,8 @@ func main() {
 		_, err := net.DialTimeout("tcp", config.ServerAddr, 2*time.Second)
 		if err != nil {
 			log.Printf("warning, could not ping server: %v", err)
+		} else {
+			log.Printf("paired with %s", config.ServerAddr)
 		}
 
 		wg.Go(func() {
@@ -155,8 +157,6 @@ func main() {
 				reader.Start(childCtx, uidChan)
 			})
 		}
-
-		log.Printf("paired with %s", config.ServerAddr)
 
 		select {
 		case <-repairChan:
