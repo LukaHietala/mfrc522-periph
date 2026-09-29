@@ -37,6 +37,7 @@ import (
 //
 // Server/client responses
 // 0x01 - OK
+//
 // 0xFF - Failed
 
 const (
@@ -164,6 +165,7 @@ func (c *TCPClient) Run(ctx context.Context, uidChan <-chan []byte, repair chan<
 					log.Printf("network err (write): %v", err)
 					conn.Close()
 					conn = nil
+					sent = true
 					continue
 				}
 
@@ -173,6 +175,7 @@ func (c *TCPClient) Run(ctx context.Context, uidChan <-chan []byte, repair chan<
 					log.Printf("network err (read response): %v", err)
 					conn.Close()
 					conn = nil
+					sent = true
 					continue
 				}
 
@@ -188,11 +191,13 @@ func (c *TCPClient) Run(ctx context.Context, uidChan <-chan []byte, repair chan<
 					}
 					conn.Close()
 					conn = nil
+					sent = true
 
 				default:
 					log.Printf("server sent some trash: 0x%x", ack[0])
 					conn.Close()
 					conn = nil
+					sent = true
 				}
 			}
 		}
