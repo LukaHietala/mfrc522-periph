@@ -50,6 +50,8 @@ const (
 
 	ackOK     = 0x01
 	ackFailed = 0xFF
+	ackPing   = 0xAA
+	ackPong   = 0xBB
 )
 
 var lastSeq atomic.Uint32

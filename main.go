@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"os"
@@ -132,8 +133,7 @@ func main() {
 			log.Printf("paired successfully with server %s", config.ServerAddr)
 		}
 
-		childCtx, cancel := context.WithCancel(ctx)
-		defer cancel()
+		childCtx, childCancel := context.WithCancel(ctx)
 
 		repairChan := make(chan struct{}, 1)
 		uidChan := make(chan []byte, 100)
@@ -141,17 +141,25 @@ func main() {
 
 		var wg sync.WaitGroup
 
-		_, err := net.DialTimeout("tcp", config.ServerAddr, 2*time.Second)
-		if err != nil {
-			log.Printf("warning, could not ping server: %v", err)
+		if err := pingServer(ctx, config.ServerAddr, 2*time.Second); err != nil {
+			log.Printf("warning, could not ping server %s: %v", config.ServerAddr, err)
 		} else {
-			log.Printf("paired with %s", config.ServerAddr)
+			log.Printf("successfully reached %s", config.ServerAddr)
 		}
 
+		// Sends uids
 		wg.Go(func() {
 			tcpClient.Run(childCtx, uidChan, repairChan)
 		})
 
+		// Listens for server pings
+		wg.Go(func() {
+			if err := startPingListener(childCtx, ":8080"); err != nil && !errors.Is(err, net.ErrClosed) {
+				log.Printf("ping listener error: %v", err)
+			}
+		})
+
+		// Actual reader
 		if !noReader && reader != nil {
 			wg.Go(func() {
 				reader.Start(childCtx, uidChan)
@@ -161,7 +169,7 @@ func main() {
 		select {
 		case <-repairChan:
 			log.Println("server abandoned us, re-pairing...")
-			cancel()
+			childCancel()
 			wg.Wait()
 
 			if err := ResetConfig(); err != nil {
@@ -170,9 +178,63 @@ func main() {
 			config = nil
 
 		case <-ctx.Done():
-			cancel()
+			childCancel()
 			wg.Wait()
 			return
+		}
+	}
+}
+
+func pingServer(ctx context.Context, addr string, timeout time.Duration) error {
+	pingCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	var dialer net.Dialer
+	conn, err := dialer.DialContext(pingCtx, "tcp", addr)
+	if err != nil {
+		return err
+	}
+	conn.Close()
+	return nil
+}
+
+func startPingListener(ctx context.Context, addr string) error {
+	var lc net.ListenConfig
+	ln, err := lc.Listen(ctx, "tcp", addr)
+	if err != nil {
+		return fmt.Errorf("failed to start ping listener: %w", err)
+	}
+	defer ln.Close()
+
+	go func() {
+		<-ctx.Done()
+		ln.Close()
+	}()
+
+	for {
+		conn, err := ln.Accept()
+		if err != nil {
+			if ctx.Err() != nil {
+				return nil
+			}
+			log.Printf("ping accept error: %v", err)
+			continue
+		}
+
+		_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
+
+		var ack [1]byte
+		if _, err := io.ReadFull(conn, ack[:]); err != nil {
+			conn.Close()
+			log.Printf("ping read error: %v", err)
+			continue
+		}
+
+		if ack[0] == ackPing {
+			_, err := conn.Write([]byte{ackPong})
+			if err != nil {
+				log.Printf("ping response write error: %v", err)
+			}
 		}
 	}
 }
