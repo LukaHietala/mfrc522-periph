@@ -61,8 +61,10 @@ var (
 
 var config *Config
 
-var label string
-var noReader bool
+var (
+	label    string
+	noReader bool
+)
 
 func init() {
 	flag.StringVar(&label, "label", "unnamed", "reader's instance name")
@@ -118,7 +120,7 @@ func main() {
 
 		if config == nil {
 			log.Println("no valid config found, starting pairing...")
-			cfg, err := StartPairing(ctx, label)
+			cfg, err := StartPairing(ctx, label, DefaultPairingPort)
 			if err != nil {
 				if errors.Is(err, context.Canceled) {
 					log.Println("pairing cancelled")
@@ -153,8 +155,9 @@ func main() {
 		})
 
 		// Listens for server pings
+		pingAddr := fmt.Sprintf(":%d", DefaultPingListenerPort)
 		wg.Go(func() {
-			if err := startPingListener(childCtx, ":8080"); err != nil && !errors.Is(err, net.ErrClosed) {
+			if err := startPingListener(childCtx, pingAddr); err != nil && !errors.Is(err, net.ErrClosed) {
 				log.Printf("ping listener error: %v", err)
 			}
 		})

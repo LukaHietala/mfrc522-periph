@@ -8,6 +8,11 @@ import (
 
 const configFile = "config.json"
 
+const (
+	DefaultPairingPort      = 8080
+	DefaultPingListenerPort = 8081
+)
+
 type Config struct {
 	ServerAddr string `json:"server_addr"`
 	ReaderID   uint16 `json:"reader_id"`
