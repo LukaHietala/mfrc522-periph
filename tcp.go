@@ -52,6 +52,7 @@ const (
 	ackFailed = 0xFF
 	ackPing   = 0xAA
 	ackPong   = 0xBB
+	ackDenied = 0x64
 )
 
 var lastSeq atomic.Uint32
@@ -143,64 +144,51 @@ func (c *TCPClient) Run(ctx context.Context, uidChan <-chan []byte, repair chan<
 				continue
 			}
 
-			for sent := false; !sent; {
-				if ctx.Err() != nil {
+			if conn == nil {
+				var err error
+				conn, err = net.DialTimeout("tcp", c.addr, c.dialTimeout)
+				if err != nil {
+					log.Printf("network err (dial): %v. discarding read uid...", err)
+					continue
+				}
+			}
+
+			_ = conn.SetDeadline(time.Now().Add(c.dialTimeout))
+			if _, err := conn.Write(packetBytes); err != nil {
+				log.Printf("network err (write): %v", err)
+				conn.Close()
+				conn = nil
+				continue
+			}
+
+			var ack [1]byte
+			if _, err := io.ReadFull(conn, ack[:]); err != nil {
+				log.Printf("network err (read response): %v", err)
+				conn.Close()
+				conn = nil
+				continue
+			}
+
+			switch ack[0] {
+			case ackOK:
+			case ackFailed:
+				log.Println("server rejected our packet (0xFF), check server logs")
+				conn.Close()
+				conn = nil
+			case ackDenied:
+				log.Println("server denied our reader (0x64), likely unpair")
+				conn.Close()
+				conn = nil
+				select {
+				case repair <- struct{}{}:
+				case <-ctx.Done():
 					return
 				}
 
-				if conn == nil {
-					var err error
-					conn, err = net.DialTimeout("tcp", c.addr, c.dialTimeout)
-					if err != nil {
-						log.Printf("network err (dial): %v", err)
-						select {
-						case <-ctx.Done():
-							return
-						case <-time.After(1 * time.Second):
-							continue
-						}
-					}
-				}
-
-				conn.SetWriteDeadline(time.Now().Add(c.dialTimeout))
-				if _, err := conn.Write(packetBytes); err != nil {
-					log.Printf("network err (write): %v", err)
-					conn.Close()
-					conn = nil
-					sent = true
-					continue
-				}
-
-				conn.SetReadDeadline(time.Now().Add(c.dialTimeout))
-				var ack [1]byte
-				if _, err := io.ReadFull(conn, ack[:]); err != nil {
-					log.Printf("network err (read response): %v", err)
-					conn.Close()
-					conn = nil
-					sent = true
-					continue
-				}
-
-				switch ack[0] {
-				case ackOK:
-					sent = true
-
-				case ackFailed:
-					select {
-					case repair <- struct{}{}:
-					case <-ctx.Done():
-						return
-					}
-					conn.Close()
-					conn = nil
-					sent = true
-
-				default:
-					log.Printf("server sent some trash: 0x%x", ack[0])
-					conn.Close()
-					conn = nil
-					sent = true
-				}
+			default:
+				log.Printf("server sent some trash: 0x%x", ack[0])
+				conn.Close()
+				conn = nil
 			}
 		}
 	}

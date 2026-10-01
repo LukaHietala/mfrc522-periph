@@ -53,6 +53,7 @@ import (
 //
 // TCP ports
 // - 8080 -pairing
+// - 8081 -ping
 
 var (
 	resetPin = rpi.P1_22
@@ -112,7 +113,7 @@ func main() {
 	}
 	config = cfg
 
-	// TODO: Cleanup
+	// Disgusting context soup
 	for {
 		if ctx.Err() != nil {
 			return
@@ -138,7 +139,7 @@ func main() {
 		childCtx, childCancel := context.WithCancel(ctx)
 
 		repairChan := make(chan struct{}, 1)
-		uidChan := make(chan []byte, 100)
+		uidChan := make(chan []byte)
 		tcpClient := NewTCPClient(config.ServerAddr)
 
 		var wg sync.WaitGroup
@@ -188,6 +189,7 @@ func main() {
 	}
 }
 
+// TODO: Make actual ping
 func pingServer(ctx context.Context, addr string, timeout time.Duration) error {
 	pingCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()

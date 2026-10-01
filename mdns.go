@@ -34,65 +34,76 @@ func StartPairing(ctx context.Context, label string, port int) (*Config, error) 
 	defer srv.Shutdown()
 	log.Printf("registered as %s (%s)", name, mac)
 
-	configChan := make(chan Config, 1)
-
 	addr := fmt.Sprintf(":%d", port)
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		return nil, err
 	}
+	defer ln.Close()
 
 	go func() {
 		<-ctx.Done()
 		ln.Close()
 	}()
 
-	go func() {
+	for {
 		conn, err := ln.Accept()
 		if err != nil {
-			return
-		}
-		defer conn.Close()
-
-		var header [2]byte
-		if _, err := io.ReadFull(conn, header[:]); err != nil {
-			conn.Write([]byte{ackFailed})
-			log.Printf("pairing failed (read header): %v", err)
-			return
-		}
-		length := binary.BigEndian.Uint16(header[:])
-
-		body := make([]byte, length)
-		if _, err := io.ReadFull(conn, body); err != nil {
-			conn.Write([]byte{ackFailed})
-			log.Printf("pairing failed (read body): %v", err)
-			return
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
+			log.Printf("pairing accept error: %v", err)
+			continue
 		}
 
-		var cfg Config
-		if err := json.Unmarshal(body, &cfg); err != nil {
-			conn.Write([]byte{ackFailed})
-			log.Printf("pairing failed (json unmarshal): %v", err)
-			return
+		cfg, err := handlePairingConn(conn)
+		if err != nil {
+			log.Printf("pairing attempt failed: %v", err)
+			continue
 		}
 
-		conn.Write([]byte{ackOK})
-
-		select {
-		case configChan <- cfg:
-		default:
-		}
-	}()
-
-	select {
-	case cfg := <-configChan:
-		if err := SaveConfig(&cfg); err != nil {
+		if err := SaveConfig(cfg); err != nil {
 			return nil, fmt.Errorf("failed to save config: %w", err)
 		}
-		return &cfg, nil
-	case <-ctx.Done():
-		return nil, ctx.Err()
+		return cfg, nil
 	}
+}
+
+// Pairing request
+// 0-1 (uint16): Length of the config
+// 2-.. (JSON): Actual config (server_addr, reader_id, secret_key)
+func handlePairingConn(conn net.Conn) (*Config, error) {
+	defer conn.Close()
+
+	_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
+
+	var header [2]byte
+	if _, err := io.ReadFull(conn, header[:]); err != nil {
+		_ = sendAck(conn, ackFailed)
+		return nil, fmt.Errorf("read header: %w", err)
+	}
+	length := binary.BigEndian.Uint16(header[:])
+
+	body := make([]byte, length)
+	if _, err := io.ReadFull(conn, body); err != nil {
+		_ = sendAck(conn, ackFailed)
+		return nil, fmt.Errorf("read body: %w", err)
+	}
+
+	var cfg Config
+	if err := json.Unmarshal(body, &cfg); err != nil {
+		_ = sendAck(conn, ackFailed)
+		return nil, fmt.Errorf("json unmarshal: %w", err)
+	}
+
+	_ = sendAck(conn, ackOK)
+	return &cfg, nil
+}
+
+func sendAck(conn net.Conn, ack byte) error {
+	_ = conn.SetWriteDeadline(time.Now().Add(2 * time.Second))
+	_, err := conn.Write([]byte{ack})
+	return err
 }
 
 func getMacAddr(ctx context.Context) (string, error) {
