@@ -19,42 +19,7 @@ import (
 	"periph.io/x/host/v3/rpi"
 )
 
-// Before starting here's some things to check:
-// - Enable SPI in raspi-config
-// - Wire MFRC522 module in and use the pins below to get it working with
-// minimal fiddling
-//
-// Pins
-//   3.3V  -> Pin 1  (3.3V Power)
-//   GND   -> Pin 6  (Ground)
-//   IRQ   -> Pin 18 (GPIO 24).. Many tutorials omit this but periph library
-//   uses interrupts instead of polling to be more efficient.
-//   MISO  -> Pin 21 (GPIO 9)
-//   RST   -> Pin 22 (GPIO 25)
-//   SCK   -> Pin 23 (GPIO 11)
-//   SDA   -> Pin 24 (GPIO 8)
-//   MOSI  -> Pin 19 (GPIO 10)
-//
-// Once ran the device advertises itself on current network under the service
-// name "_rfid_reader._tcp" with label ({label_flag}+{device_mac_address}). The
-// main server can scan for these and for a pair. Pair info is stored in "config.json".
-//
-// Logs can be read from the systemd journal
-//
-// Tested on:
-// - Raspberry Pi 3 Model B+ Rev 1.3
-// - Mifare MFRC522 [Bus: SPI0.0, Reset Pin: GPIO25, IRQ Pin: GPIO24]
-//
-// Other useful stuff:
-// - https://github.com/periph/devices/blob/main/mfrc522/example_test.go
-// - https://www.nxp.com/docs/en/data-sheet/MFRC522.pdf
-// - https://periph.io/device/mf-rc522/
-// - https://github.com/hrzlgnm/mdns-browser
-//
-// TCP ports
-// - 8080 -pairing
-// - 8081 -ping
-
+// Change if needed
 var (
 	resetPin = rpi.P1_22
 	irqPin   = rpi.P1_18
@@ -77,7 +42,6 @@ func main() {
 		fmt.Fprintf(flag.CommandLine.Output(), "Usage of %s:\n", os.Args[0])
 		flag.PrintDefaults()
 	}
-
 	flag.Parse()
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -144,7 +108,7 @@ func main() {
 
 		var wg sync.WaitGroup
 
-		if err := pingServer(ctx, config.ServerAddr, 2*time.Second); err != nil {
+		if err := pingServer(config.ServerAddr, 2*time.Second); err != nil {
 			log.Printf("warning, could not ping server %s: %v", config.ServerAddr, err)
 		} else {
 			log.Printf("successfully reached %s", config.ServerAddr)
@@ -190,12 +154,8 @@ func main() {
 }
 
 // TODO: Make actual ping
-func pingServer(ctx context.Context, addr string, timeout time.Duration) error {
-	pingCtx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-
-	var dialer net.Dialer
-	conn, err := dialer.DialContext(pingCtx, "tcp", addr)
+func pingServer(addr string, timeout time.Duration) error {
+	conn, err := net.DialTimeout("tcp", addr, timeout)
 	if err != nil {
 		return err
 	}
@@ -204,8 +164,7 @@ func pingServer(ctx context.Context, addr string, timeout time.Duration) error {
 }
 
 func startPingListener(ctx context.Context, addr string) error {
-	var lc net.ListenConfig
-	ln, err := lc.Listen(ctx, "tcp", addr)
+	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		return fmt.Errorf("failed to start ping listener: %w", err)
 	}
