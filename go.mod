@@ -10,6 +10,7 @@ require (
 )
 
 require (
+	github.com/BurntSushi/toml v1.6.0 // indirect
 	github.com/cenkalti/backoff v2.2.1+incompatible // indirect
 	github.com/miekg/dns v1.1.27 // indirect
 	golang.org/x/crypto v0.0.0-20191011191535-87dc89f01550 // indirect
