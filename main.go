@@ -8,6 +8,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -23,10 +24,6 @@ import (
 type ScanRequest struct {
 	UID       string `json:"uid"`
 	Timestamp int64  `json:"timestamp"`
-}
-
-type ScanResponse struct {
-	Error string `json:"error"`
 }
 
 // Change if needed
@@ -127,18 +124,12 @@ func main() {
 				log.Println(err)
 			}
 
-			defer res.Body.Close()
-
-			scanRes := &ScanResponse{}
-			err = json.NewDecoder(res.Body).Decode(scanRes)
+			rbody, err := io.ReadAll(res.Body)
 			if err != nil {
 				log.Println(err)
 			}
 
-			if res.StatusCode != http.StatusCreated && res.StatusCode != http.StatusOK {
-				log.Println(scanRes.Error)
-			}
+			log.Printf("%s: %s", res.Status, string(rbody))
 		}
-
 	}
 }
