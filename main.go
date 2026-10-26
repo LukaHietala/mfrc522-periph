@@ -24,6 +24,7 @@ import (
 type ScanRequest struct {
 	UID       string `json:"uid"`
 	Timestamp int64  `json:"timestamp"`
+	Secret    string `json:"secret"`
 }
 
 // Change if needed
@@ -104,6 +105,7 @@ func main() {
 			request := ScanRequest{
 				UID:       hex.EncodeToString(uid),
 				Timestamp: time.Now().Unix(),
+				Secret:    cfg.Reader.SecretKey,
 			}
 
 			body, err := json.Marshal(request)
